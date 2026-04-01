@@ -153,6 +153,13 @@ def get_vendor(category: str, method: str = None) -> str:
 
 def route_to_vendor(method: str, *args, **kwargs):
     """Route method calls to appropriate vendor implementation with fallback support."""
+    # Strip .__US__ sentinel appended by CLI collision resolver
+    # e.g. "SHEL.__US__" → "SHEL" before passing to any vendor
+    args = tuple(
+        a.replace(".__US__", "").replace(".__us__", "") if isinstance(a, str) else a
+        for a in args
+    )
+
     category = get_category_for_method(method)
     vendor_config = get_vendor(category, method)
     primary_vendors = [v.strip() for v in vendor_config.split(',')]
