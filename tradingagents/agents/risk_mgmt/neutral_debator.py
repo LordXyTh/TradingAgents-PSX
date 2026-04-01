@@ -1,6 +1,6 @@
 import time
 import json
-from tradingagents.agents.utils.agent_utils import build_instrument_context
+from tradingagents.agents.utils.agent_utils import build_instrument_context, resilient_node
 
 
 def create_neutral_debator(llm):
@@ -56,4 +56,4 @@ Engage actively by analyzing both sides critically, addressing weaknesses in the
 
         return {"risk_debate_state": new_risk_debate_state}
 
-    return neutral_node
+    return resilient_node(neutral_node, "Neutral Analyst", {"messages": [], "risk_debate_state": {}})

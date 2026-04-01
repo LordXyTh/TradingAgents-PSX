@@ -78,6 +78,9 @@ class TradingAgentsGraph:
         if self.callbacks:
             llm_kwargs["callbacks"] = self.callbacks
 
+        # Add retry logic — retries on transient API errors (rate limits, timeouts, 5xx)
+        llm_kwargs.setdefault("max_retries", 5)
+
         deep_client = create_llm_client(
             provider=self.config["llm_provider"],
             model=self.config["deep_think_llm"],

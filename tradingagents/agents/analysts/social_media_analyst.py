@@ -1,7 +1,7 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
-from tradingagents.agents.utils.agent_utils import build_instrument_context, get_language_instruction, get_news
+from tradingagents.agents.utils.agent_utils import build_instrument_context, get_language_instruction, get_news, resilient_node
 from tradingagents.dataflows.config import get_config
 
 
@@ -56,4 +56,4 @@ def create_social_media_analyst(llm):
             "sentiment_report": report,
         }
 
-    return social_media_analyst_node
+    return resilient_node(social_media_analyst_node, "Social Media Analyst", {"messages": [], "sentiment_report": "[Sentiment unavailable]"})

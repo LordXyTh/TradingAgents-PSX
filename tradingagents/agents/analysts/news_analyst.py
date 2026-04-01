@@ -2,6 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
 from tradingagents.agents.utils.agent_utils import (
+    resilient_node,
     build_instrument_context,
     get_global_news,
     get_language_instruction,
@@ -61,4 +62,4 @@ def create_news_analyst(llm):
             "news_report": report,
         }
 
-    return news_analyst_node
+    return resilient_node(news_analyst_node, "News Analyst", {"messages": [], "news_report": "[News unavailable]"})

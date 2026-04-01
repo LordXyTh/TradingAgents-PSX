@@ -1,5 +1,5 @@
 from langchain_core.messages import AIMessage
-from tradingagents.agents.utils.agent_utils import build_instrument_context
+from tradingagents.agents.utils.agent_utils import build_instrument_context, resilient_node
 import time
 import json
 
@@ -59,4 +59,4 @@ Engage by questioning their optimism and emphasizing the potential downsides the
 
         return {"risk_debate_state": new_risk_debate_state}
 
-    return conservative_node
+    return resilient_node(conservative_node, "Conservative Analyst", {"messages": [], "risk_debate_state": {}})

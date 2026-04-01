@@ -6,6 +6,7 @@ from tradingagents.agents.utils.agent_utils import (
     get_indicators,
     get_language_instruction,
     get_stock_data,
+    resilient_node,
 )
 from tradingagents.dataflows.config import get_config
 
@@ -87,4 +88,4 @@ Volume-Based Indicators:
             "market_report": report,
         }
 
-    return market_analyst_node
+    return resilient_node(market_analyst_node, "Market Analyst", {"messages": [], "market_report": "[Market analysis unavailable]"})

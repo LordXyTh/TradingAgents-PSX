@@ -1,6 +1,6 @@
 import time
 import json
-from tradingagents.agents.utils.agent_utils import build_instrument_context
+from tradingagents.agents.utils.agent_utils import build_instrument_context, resilient_node
 
 
 def create_aggressive_debator(llm):
@@ -56,4 +56,4 @@ Engage actively by addressing any specific concerns raised, refuting the weaknes
 
         return {"risk_debate_state": new_risk_debate_state}
 
-    return aggressive_node
+    return resilient_node(aggressive_node, "Aggressive Analyst", {"messages": [], "risk_debate_state": {}})

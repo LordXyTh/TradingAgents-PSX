@@ -2,6 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
 from tradingagents.agents.utils.agent_utils import (
+    resilient_node,
     build_instrument_context,
     get_balance_sheet,
     get_cashflow,
@@ -68,4 +69,4 @@ def create_fundamentals_analyst(llm):
             "fundamentals_report": report,
         }
 
-    return fundamentals_analyst_node
+    return resilient_node(fundamentals_analyst_node, "Fundamentals Analyst", {"messages": [], "fundamentals_report": "[Fundamentals unavailable]"})
