@@ -36,3 +36,28 @@ DEFAULT_CONFIG = {
         # Example: "get_stock_data": "alpha_vantage",  # Override category default
     },
 }
+
+# PSX (Pakistan Stock Exchange) vendor config
+PSX_CONFIG = {
+    **DEFAULT_CONFIG,
+    "data_vendors": {
+        "core_stock_apis": "psx",
+        "technical_indicators": "psx",
+        "fundamental_data": "psx",
+        "news_data": "psx",
+    },
+}
+
+
+def get_config_for_ticker(ticker: str) -> dict:
+    """
+    Auto-detect market from ticker and return appropriate config.
+    PSX tickers (in PSX_TICKER_LIST or ending in .KA) → PSX_CONFIG
+    Everything else → DEFAULT_CONFIG
+    """
+    # Lazy import to avoid circular imports (psx_stock depends on dataflows)
+    from tradingagents.dataflows.psx_stock import is_psx_ticker
+
+    if is_psx_ticker(ticker):
+        return PSX_CONFIG.copy()
+    return DEFAULT_CONFIG.copy()

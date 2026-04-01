@@ -35,6 +35,11 @@ dependencies = [
 [project.scripts]
 tradingagents = "cli.main:app"
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: end-to-end tests requiring API keys (deselect with '-k not integration')",
+]
+
 [tool.setuptools.packages.find]
 include = ["tradingagents*", "cli*"]
 
