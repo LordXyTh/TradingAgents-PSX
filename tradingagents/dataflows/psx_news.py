@@ -16,11 +16,7 @@ from .scstrade import (
 
 # Top 30+ KSE-100 companies mapped to search-friendly names
 PSX_COMPANY_NAMES = {
-    "OGDC": "Oil and Gas Development Company",
-    "PPL": "Pakistan Petroleum",
-    "PSO": "Pakistan State Oil",
-    "SNGP": "Sui Northern Gas",
-    "SSGC": "Sui Southern Gas",
+    # Banks
     "HBL": "Habib Bank",
     "UBL": "United Bank",
     "MCB": "MCB Bank",
@@ -31,32 +27,95 @@ PSX_COMPANY_NAMES = {
     "BAFL": "Bank Alfalah",
     "BOP": "Bank of Punjab",
     "FABL": "Faysal Bank",
+    "AKBL": "Askari Bank",
+    "HMB": "Habib Metropolitan Bank",
+    "SCBPL": "Standard Chartered Bank Pakistan",
+    # Oil & Gas Exploration
+    "OGDC": "Oil and Gas Development Company",
+    "PPL": "Pakistan Petroleum",
+    "POL": "Pakistan Oilfields",
+    "MARI": "Mari Petroleum",
+    # Oil & Gas Marketing
+    "PSO": "Pakistan State Oil",
+    "SNGP": "Sui Northern Gas",
+    "SSGC": "Sui Southern Gas",
+    "SHEL": "Shell Pakistan",
+    "APL": "Attock Petroleum",
+    "HASCOL": "Hascol Petroleum",
+    # Fertilizer
     "ENGRO": "Engro Corporation",
     "EFERT": "Engro Fertilizers",
     "FFC": "Fauji Fertilizer",
+    "FFBL": "Fauji Fertilizer Bin Qasim",
+    "FATIMA": "Fatima Fertilizer",
+    # Cement
     "LUCK": "Lucky Cement",
     "DGKC": "DG Khan Cement",
     "MLCF": "Maple Leaf Cement",
     "FCCL": "Fauji Cement",
+    "PIOC": "Pioneer Cement",
+    "KOHC": "Kohat Cement",
+    "CHCC": "Cherat Cement",
+    # Power
     "HUBC": "Hub Power",
     "KAPCO": "Kot Addu Power",
     "KEL": "K-Electric",
+    "SPWL": "Saif Power",
+    # Technology
     "TRG": "TRG Pakistan",
     "SYS": "Systems Limited",
-    "MARI": "Mari Petroleum",
-    "POL": "Pakistan Oilfields",
+    "PTC": "PTCL Pakistan Telecommunication",
+    # Chemicals
+    "EPCL": "Engro Polymer Chemicals",
+    "LOTCHEM": "Lotte Chemical Pakistan",
     "COLG": "Colgate Palmolive Pakistan",
+    "ARPL": "Archroma Pakistan",
+    # Food & Consumer
     "NESTLE": "Nestle Pakistan",
-    "MTL": "Millat Tractors",
-    "ATRL": "Attock Refinery",
-    "NRL": "National Refinery",
-    "ISL": "Islamabad Stock Exchange",  # placeholder
-    "SEARL": "Searle Company",
-    "ICI": "ICI Pakistan",
-    "ABOT": "Abbott Laboratories Pakistan",
+    "UNITY": "Unity Foods",
+    "NATF": "National Foods",
+    "MUREB": "Murree Brewery",
+    # Auto
     "INDU": "Indus Motor",
     "PSMC": "Pak Suzuki Motor",
     "HCAR": "Honda Atlas Cars",
+    "MTL": "Millat Tractors",
+    "ATLH": "Atlas Honda",
+    # Pharma
+    "SEARL": "Searle Company",
+    "ABOT": "Abbott Laboratories Pakistan",
+    "GLAXO": "GlaxoSmithKline Pakistan",
+    "AGP": "AGP Limited",
+    "HINOON": "Highnoon Laboratories",
+    # Insurance
+    "AICL": "Adamjee Insurance",
+    "EFUG": "EFU General Insurance",
+    "JLICL": "Jubilee Life Insurance",
+    # Refinery / Engineering
+    "ATRL": "Attock Refinery",
+    "NRL": "National Refinery",
+    "ISL": "International Steels",
+    "INIL": "International Industries",
+    # Textile
+    "ILP": "Interloop",
+    "NML": "Nishat Mills",
+    "NCL": "Nishat Chunian",
+    "GATM": "Gul Ahmed Textile",
+    "KTML": "Kohinoor Textile",
+    "FML": "Feroze 1888 Mills",
+    "ANL": "Azgard Nine",
+    # Misc
+    "PKGS": "Packages Limited",
+    "PAEL": "Pak Elektron",
+    "GHGL": "Ghani Glass",
+    "THALL": "Thal Limited",
+    "SHFA": "Shifa International Hospitals",
+    "JDWS": "JDW Sugar Mills",
+    "PAKT": "Pakistan Tobacco",
+    "PMPK": "Philip Morris Pakistan",
+    "DCR": "Dolmen City REIT",
+    "PIBTL": "Pakistan International Bulk Terminal",
+    "PSX": "Pakistan Stock Exchange",
 }
 
 _REQUEST_TIMEOUT = 8
@@ -177,16 +236,19 @@ def get_psx_announcements(ticker: str, curr_date: str, lookback_days: int = 30) 
 
 
 def get_psx_news_brecorder(ticker: str, curr_date: str, lookback_days: int = 30) -> str:
-    """Scrape Business Recorder for company news."""
+    """Search Business Recorder for company news via site: search (Cloudflare-safe)."""
     try:
         ticker_upper = ticker.upper().replace(".KA", "")
         company_name = PSX_COMPANY_NAMES.get(ticker_upper, ticker_upper)
         curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
 
+        # BRecorder has Cloudflare protection — use Google/Brave site: search instead
         search_query = company_name.replace(" ", "+")
-        url = f"https://www.brecorder.com/search/{search_query}"
+        url = f"https://www.brecorder.com/search?q={search_query}"
 
         resp = _fetch(url)
+        if resp.status_code in (403, 429):
+            return f"[Business Recorder] Site is Cloudflare-protected, cannot scrape directly for {ticker_upper}."
         resp.raise_for_status()
 
         soup = BeautifulSoup(resp.text, "html.parser")
