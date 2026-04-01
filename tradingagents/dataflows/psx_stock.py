@@ -13,18 +13,74 @@ from .y_finance import (
     get_income_statement as yf_get_income_statement,
 )
 
-# Top 30+ KSE-100 tickers (bare symbols, no .KA suffix)
+# Full KSE-100 Index constituents (as of March 2025 recomposition)
+# Source: ksestocks.com/MarketIndexes/KSE-100
 PSX_TICKER_LIST = [
-    "OGDC", "PPL", "SUI", "SSGC", "SNGP",          # Oil & Gas / Utilities
-    "HBL", "UBL", "MCB", "BAHL", "NBP",              # Banks
-    "ABL", "MEBL", "BAFL", "BOP", "AKBL",            # Banks (cont.)
-    "ENGRO", "EFERT", "FFC", "FFBL",                  # Fertilizer / Chemicals
-    "LUCK", "DGKC", "MLCF", "PIOC", "FCCL",          # Cement
-    "PSO", "SHEL", "APL", "HASCOL",                   # Oil Marketing
-    "HUBC", "KEL", "KAPCO",                           # Power
-    "TRG", "SYS", "AVN",                              # Technology
-    "MTL", "ISL", "COLG", "NESTLE", "UNITY",          # Consumer / Misc
-    "MARI", "POL", "ATRL",                            # E&P / Refinery
+    # Power Generation & Distribution (4)
+    "KEL", "HUBC", "KAPCO", "SPWL",
+    # Oil & Gas Exploration (4)
+    "OGDC", "PPL", "POL", "MARI",
+    # Commercial Banks (13)
+    "SCBPL", "BOP", "NBP", "MEBL", "BAFL", "FABL", "HBL", "AKBL",
+    "UBL", "MCB", "ABL", "BAHL", "HMB",
+    # Technology & Communication (3)
+    "PTC", "TRG", "SYS",
+    # Cement (7)
+    "FCCL", "MLCF", "DGKC", "LUCK", "PIOC", "KOHC", "CHCC",
+    # Real Estate Investment Trust (1)
+    "DCR",
+    # Fertilizer (5)
+    "FATIMA", "EFERT", "FFBL", "FFC", "ENGRO",
+    # Transport (1)
+    "PIBTL",
+    # Chemical (4)
+    "LOTCHEM", "EPCL", "COLG", "ARPL",
+    # Food & Personal Care (4)
+    "UNITY", "NATF", "NESTLE", "MUREB",
+    # Oil & Gas Marketing (6)
+    "HASCOL", "SSGC", "SNGP", "PSO", "SHEL", "APL",
+    # Textile Composite (7)
+    "ILP", "GATM", "ANL", "FML", "NML", "KTML", "NCL",
+    # Cable & Electrical (1)
+    "PAEL",
+    # Glass & Ceramics (1)
+    "GHGL",
+    # Investment Banks/Securities (2)
+    "PSX", "OLPL",
+    # Engineering (2)
+    "ISL", "INIL",
+    # Pharmaceuticals (5)
+    "SEARL", "GLAXO", "AGP", "ABOT", "HINOON",
+    # Insurance (3)
+    "AICL", "EFUG", "JLICL",
+    # Synthetic & Rayon (1)
+    "IBFL",
+    # Close-End Mutual Fund (1)
+    "HGFA",
+    # Tobacco (2)
+    "PAKT", "PMPK",
+    # Modarabas (1)
+    "FHAM",
+    # Automobile Assembler (5)
+    "HCAR", "MTL", "ATLH", "PSMC", "INDU",
+    # Refinery (1)
+    "ATRL",
+    # Textile Weaving (1)
+    "YOUW",
+    # Paper & Board (1)
+    "PKGS",
+    # Automobile Parts (2)
+    "THALL", "AGIL",
+    # Miscellaneous (2)
+    "SHFA", "PSEL",
+    # Sugar (1)
+    "JDWS",
+    # Textile Spinning (1)
+    "IDYM",
+    # Leather (1)
+    "SRVI",
+    # Woollen (1)
+    "BNWM",
 ]
 
 
