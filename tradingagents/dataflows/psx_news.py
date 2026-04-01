@@ -1,8 +1,11 @@
-"""PSX news scraping — Business Recorder, Dawn Business, and PSX announcements."""
+"""PSX news scraping — Business Recorder, Dawn Business, PSX announcements,
+ProPakistani, Profit by Pakistan Today, The News, and SBP press releases."""
 
+import re
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+from urllib.parse import quote_plus
 
 # Top 30+ KSE-100 companies mapped to search-friendly names
 PSX_COMPANY_NAMES = {
@@ -49,13 +52,19 @@ PSX_COMPANY_NAMES = {
     "HCAR": "Honda Atlas Cars",
 }
 
-_REQUEST_TIMEOUT = 15
+_REQUEST_TIMEOUT = 8
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     ),
 }
+
+# Patterns that indicate a table row is profile info, not an announcement
+_SKIP_PATTERNS = re.compile(
+    r"^(CEO|Chairperson|Chairman|Secretary|Director|CFO|Company Secretary|Auditor)\b",
+    re.IGNORECASE,
+)
 
 
 def _parse_date_flexible(date_str: str) -> datetime | None:
@@ -87,130 +96,98 @@ def _in_date_window(dt: datetime | None, curr_dt: datetime, lookback_days: int) 
     return start <= dt <= curr_dt
 
 
-def get_psx_announcements(ticker: str, curr_date: str, lookback_days: int = 30) -> str:
-    """
-    Scrape PSX official announcements for a ticker.
-    Source: dps.psx.com.pk/company/{TICKER} announcements section.
-    Returns formatted string of announcement titles + dates.
-    """
-    ticker = ticker.upper().replace(".KA", "")
-    url = f"https://dps.psx.com.pk/company/{ticker}"
-    curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+def _strip_trailing_junk(text: str) -> str:
+    """Remove trailing 'ViewPDF', 'View' etc. from announcement text."""
+    return re.sub(r"\s*(ViewPDF|View)\s*$", "", text).strip()
 
+
+def _fetch(url: str) -> requests.Response:
+    """GET with standard timeout/headers. Caller must handle exceptions."""
+    return requests.get(url, headers=_HEADERS, timeout=_REQUEST_TIMEOUT)
+
+
+# ---------------------------------------------------------------------------
+# Individual source scrapers
+# ---------------------------------------------------------------------------
+
+
+def get_psx_announcements(ticker: str, curr_date: str, lookback_days: int = 30) -> str:
+    """Scrape PSX official announcements for a ticker from dps.psx.com.pk."""
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_REQUEST_TIMEOUT)
+        ticker = ticker.upper().replace(".KA", "")
+        url = f"https://dps.psx.com.pk/company/{ticker}"
+        curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+
+        resp = _fetch(url)
         resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        announcements = []
+
+        for table in soup.find_all("table"):
+            for row in table.find_all("tr"):
+                cells = row.find_all("td")
+                if len(cells) < 2:
+                    continue
+                texts = [c.get_text(strip=True) for c in cells]
+
+                date_val = None
+                desc_parts = []
+                for text in texts:
+                    parsed = _parse_date_flexible(text)
+                    if parsed and not date_val:
+                        date_val = parsed
+                    elif text:
+                        desc_parts.append(text)
+
+                desc = _strip_trailing_junk(" — ".join(desc_parts) if desc_parts else " | ".join(texts))
+                if not desc.strip():
+                    continue
+                # Skip profile/management rows
+                if _SKIP_PATTERNS.match(desc):
+                    continue
+                # Only include items that have a real parsed date
+                if date_val is None:
+                    continue
+                if _in_date_window(date_val, curr_dt, lookback_days):
+                    date_display = date_val.strftime("%Y-%m-%d")
+                    announcements.append(f"- [{date_display}] {desc}")
+
+        # Also look for announcement divs / list items
+        for div in soup.find_all(["div", "li", "a"], class_=lambda c: c and "announce" in str(c).lower()):
+            text = _strip_trailing_junk(div.get_text(strip=True))
+            if text and len(text) > 10 and not _SKIP_PATTERNS.match(text):
+                announcements.append(f"- {text}")
+
+        if not announcements:
+            return f"[PSX Announcements] No announcements found for {ticker} within the last {lookback_days} days."
+
+        header = f"## PSX Announcements for {ticker} (last {lookback_days} days from {curr_date}):\n\n"
+        return header + "\n".join(announcements[:50])
     except Exception as e:
         return f"[PSX Announcements] Could not fetch announcements for {ticker}: {e}"
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-
-    announcements = []
-
-    # Look for announcement tables / sections on the page
-    # dps.psx.com.pk uses tables with class or specific structure for announcements
-    tables = soup.find_all("table")
-    for table in tables:
-        rows = table.find_all("tr")
-        for row in rows:
-            cells = row.find_all("td")
-            if len(cells) < 2:
-                continue
-            # Typically: date | description or description | date
-            texts = [c.get_text(strip=True) for c in cells]
-            # Try to find which cell is the date
-            date_val = None
-            desc_parts = []
-            for text in texts:
-                parsed = _parse_date_flexible(text)
-                if parsed and not date_val:
-                    date_val = parsed
-                else:
-                    if text:
-                        desc_parts.append(text)
-
-            desc = " — ".join(desc_parts) if desc_parts else " | ".join(texts)
-            if not desc.strip():
-                continue
-
-            if _in_date_window(date_val, curr_dt, lookback_days):
-                date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
-                announcements.append(f"- [{date_display}] {desc}")
-
-    # Also look for announcement divs / list items
-    for div in soup.find_all(["div", "li", "a"], class_=lambda c: c and "announce" in str(c).lower()):
-        text = div.get_text(strip=True)
-        if text and len(text) > 10:
-            announcements.append(f"- {text}")
-
-    if not announcements:
-        return f"[PSX Announcements] No announcements found for {ticker} within the last {lookback_days} days."
-
-    header = f"## PSX Announcements for {ticker} (last {lookback_days} days from {curr_date}):\n\n"
-    return header + "\n".join(announcements[:50])
-
 
 def get_psx_news_brecorder(ticker: str, curr_date: str, lookback_days: int = 30) -> str:
-    """
-    Scrape Business Recorder for company news.
-    Returns formatted news items with date, title, snippet.
-    """
-    ticker_upper = ticker.upper().replace(".KA", "")
-    company_name = PSX_COMPANY_NAMES.get(ticker_upper, ticker_upper)
-    curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
-
-    # Business Recorder search URL
-    search_query = company_name.replace(" ", "+")
-    url = f"https://www.brecorder.com/search/{search_query}"
-
+    """Scrape Business Recorder for company news."""
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_REQUEST_TIMEOUT)
+        ticker_upper = ticker.upper().replace(".KA", "")
+        company_name = PSX_COMPANY_NAMES.get(ticker_upper, ticker_upper)
+        curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+
+        search_query = company_name.replace(" ", "+")
+        url = f"https://www.brecorder.com/search/{search_query}"
+
+        resp = _fetch(url)
         resp.raise_for_status()
-    except Exception as e:
-        return f"[Business Recorder] Could not fetch news for {ticker_upper}: {e}"
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    articles = []
+        soup = BeautifulSoup(resp.text, "html.parser")
+        articles = []
 
-    # BR search results typically have article/story blocks
-    for item in soup.find_all("article"):
-        title_tag = item.find(["h2", "h3", "h4", "a"])
-        title = title_tag.get_text(strip=True) if title_tag else ""
-        if not title:
-            continue
-
-        link = ""
-        a_tag = item.find("a", href=True)
-        if a_tag:
-            href = a_tag["href"]
-            link = href if href.startswith("http") else f"https://www.brecorder.com{href}"
-
-        # Look for date
-        date_tag = item.find("span", class_=lambda c: c and "date" in str(c).lower())
-        if not date_tag:
-            date_tag = item.find("time")
-        date_text = date_tag.get_text(strip=True) if date_tag else ""
-        date_val = _parse_date_flexible(date_text) if date_text else None
-
-        # Snippet
-        snippet_tag = item.find("p")
-        snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
-
-        if _in_date_window(date_val, curr_dt, lookback_days):
-            date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
-            entry = f"### {title} ({date_display})\n"
-            if snippet:
-                entry += f"{snippet}\n"
-            if link:
-                entry += f"Link: {link}\n"
-            articles.append(entry)
-
-    # Also try story-list / search-result divs
-    if not articles:
-        for item in soup.find_all("div", class_=lambda c: c and ("story" in str(c).lower() or "search" in str(c).lower())):
+        for item in soup.find_all("article"):
             title_tag = item.find(["h2", "h3", "h4", "a"])
             title = title_tag.get_text(strip=True) if title_tag else ""
-            if not title or len(title) < 10:
+            if not title:
                 continue
 
             link = ""
@@ -237,120 +214,10 @@ def get_psx_news_brecorder(ticker: str, curr_date: str, lookback_days: int = 30)
                     entry += f"Link: {link}\n"
                 articles.append(entry)
 
-    if not articles:
-        return f"[Business Recorder] No recent news found for {ticker_upper} ({company_name})."
-
-    header = f"## Business Recorder News for {ticker_upper} (last {lookback_days} days from {curr_date}):\n\n"
-    return header + "\n".join(articles[:20])
-
-
-def get_news_psx(ticker: str, start_date: str, end_date: str) -> str:
-    """
-    Main entry point — combines PSX announcements + Business Recorder news.
-    Falls back gracefully if scraping fails.
-
-    Signature matches get_news_yfinance(ticker, start_date, end_date).
-    """
-    # Convert start_date/end_date to curr_date + lookback_days
-    try:
-        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        lookback_days = max((end_dt - start_dt).days, 1)
-        curr_date = end_date
-    except ValueError:
-        curr_date = end_date if end_date else start_date
-        lookback_days = 7
-
-    parts = []
-
-    # PSX official announcements
-    try:
-        psx_ann = get_psx_announcements(ticker, curr_date, lookback_days)
-        parts.append(psx_ann)
-    except Exception as e:
-        parts.append(f"[PSX Announcements] Error: {e}")
-
-    # Business Recorder
-    try:
-        br_news = get_psx_news_brecorder(ticker, curr_date, lookback_days)
-        parts.append(br_news)
-    except Exception as e:
-        parts.append(f"[Business Recorder] Error: {e}")
-
-    combined = "\n\n".join(parts)
-    if not combined.strip():
-        return f"No news found for {ticker} between {start_date} and {end_date}."
-
-    return combined
-
-
-def get_global_news_psx(curr_date: str, look_back_days: int = 7, limit: int = 10) -> str:
-    """
-    Pakistan macro/market news (KSE-100 index, SBP policy, economy).
-    Scrapes Business Recorder economy section and Dawn Business.
-
-    Signature matches get_global_news_yfinance(curr_date, look_back_days, limit).
-    """
-    curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
-    all_articles = []
-
-    # Source 1: Business Recorder economy
-    try:
-        resp = requests.get(
-            "https://www.brecorder.com/economy",
-            headers=_HEADERS,
-            timeout=_REQUEST_TIMEOUT,
-        )
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        for item in soup.find_all(["article", "div"], class_=lambda c: c and ("story" in str(c).lower() or "article" in str(c).lower())):
-            title_tag = item.find(["h2", "h3", "h4", "a"])
-            title = title_tag.get_text(strip=True) if title_tag else ""
-            if not title or len(title) < 10:
-                continue
-
-            link = ""
-            a_tag = item.find("a", href=True)
-            if a_tag:
-                href = a_tag["href"]
-                link = href if href.startswith("http") else f"https://www.brecorder.com{href}"
-
-            date_tag = item.find("span", class_=lambda c: c and "date" in str(c).lower())
-            if not date_tag:
-                date_tag = item.find("time")
-            date_text = date_tag.get_text(strip=True) if date_tag else ""
-            date_val = _parse_date_flexible(date_text) if date_text else None
-
-            snippet_tag = item.find("p")
-            snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
-
-            if _in_date_window(date_val, curr_dt, look_back_days):
-                date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
-                all_articles.append(
-                    f"### {title} ({date_display}, Business Recorder)\n"
-                    + (f"{snippet}\n" if snippet else "")
-                    + (f"Link: {link}\n" if link else "")
-                )
-
-            if len(all_articles) >= limit:
-                break
-    except Exception:
-        pass  # graceful fallback, try next source
-
-    # Source 2: Dawn Business
-    if len(all_articles) < limit:
-        try:
-            resp = requests.get(
-                "https://www.dawn.com/business",
-                headers=_HEADERS,
-                timeout=_REQUEST_TIMEOUT,
-            )
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            for item in soup.find_all("article"):
-                title_tag = item.find(["h2", "h3", "a"])
+        # Fallback: story-list / search-result divs
+        if not articles:
+            for item in soup.find_all("div", class_=lambda c: c and ("story" in str(c).lower() or "search" in str(c).lower())):
+                title_tag = item.find(["h2", "h3", "h4", "a"])
                 title = title_tag.get_text(strip=True) if title_tag else ""
                 if not title or len(title) < 10:
                     continue
@@ -359,13 +226,305 @@ def get_global_news_psx(curr_date: str, look_back_days: int = 7, limit: int = 10
                 a_tag = item.find("a", href=True)
                 if a_tag:
                     href = a_tag["href"]
-                    link = href if href.startswith("http") else f"https://www.dawn.com{href}"
+                    link = href if href.startswith("http") else f"https://www.brecorder.com{href}"
 
-                date_tag = item.find("span", class_=lambda c: c and "time" in str(c).lower())
+                date_tag = item.find("span", class_=lambda c: c and "date" in str(c).lower())
                 if not date_tag:
                     date_tag = item.find("time")
-                    if not date_tag:
-                        date_tag = item.find("span", class_="timestamp")
+                date_text = date_tag.get_text(strip=True) if date_tag else ""
+                date_val = _parse_date_flexible(date_text) if date_text else None
+
+                snippet_tag = item.find("p")
+                snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
+
+                if _in_date_window(date_val, curr_dt, lookback_days):
+                    date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
+                    entry = f"### {title} ({date_display})\n"
+                    if snippet:
+                        entry += f"{snippet}\n"
+                    if link:
+                        entry += f"Link: {link}\n"
+                    articles.append(entry)
+
+        if not articles:
+            return f"[Business Recorder] No recent news found for {ticker_upper} ({company_name})."
+
+        header = f"## Business Recorder News for {ticker_upper} (last {lookback_days} days from {curr_date}):\n\n"
+        return header + "\n".join(articles[:20])
+    except Exception as e:
+        return f"[Business Recorder] Could not fetch news for {ticker.upper().replace('.KA', '')}: {e}"
+
+
+def get_psx_news_propakistani(ticker: str, curr_date: str, lookback_days: int = 30) -> str:
+    """Scrape ProPakistani for company news."""
+    try:
+        ticker_upper = ticker.upper().replace(".KA", "")
+        company_name = PSX_COMPANY_NAMES.get(ticker_upper, ticker_upper)
+        curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+
+        url = f"https://propakistani.pk/search/?q={quote_plus(company_name)}"
+        resp = _fetch(url)
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        articles = []
+
+        for item in soup.find_all(["article", "div"], class_=lambda c: c and ("post" in str(c).lower() or "search" in str(c).lower())):
+            title_tag = item.find(["h2", "h3", "h4"], class_=lambda c: c and "title" in str(c).lower()) or item.find(["h2", "h3", "h4"])
+            if not title_tag:
+                a_tag = item.find("a")
+                title_tag = a_tag
+            title = title_tag.get_text(strip=True) if title_tag else ""
+            if not title or len(title) < 10:
+                continue
+
+            link = ""
+            a_tag = item.find("a", href=True)
+            if a_tag:
+                href = a_tag["href"]
+                link = href if href.startswith("http") else f"https://propakistani.pk{href}"
+
+            date_tag = item.find("time") or item.find("span", class_=lambda c: c and "date" in str(c).lower())
+            date_text = date_tag.get_text(strip=True) if date_tag else ""
+            date_val = _parse_date_flexible(date_text) if date_text else None
+
+            if _in_date_window(date_val, curr_dt, lookback_days):
+                date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
+                articles.append(f"- [{date_display}] {title}")
+
+        if not articles:
+            return f"[ProPakistani] No recent news found for {ticker_upper}."
+
+        header = f"## ProPakistani News for {ticker_upper} (last {lookback_days} days from {curr_date}):\n\n"
+        return header + "\n".join(articles[:15])
+    except Exception as e:
+        return f"[ProPakistani] Could not fetch news for {ticker.upper().replace('.KA', '')}: {e}"
+
+
+def get_psx_news_profit(ticker: str, curr_date: str, lookback_days: int = 30) -> str:
+    """Scrape Profit by Pakistan Today for company news."""
+    try:
+        ticker_upper = ticker.upper().replace(".KA", "")
+        company_name = PSX_COMPANY_NAMES.get(ticker_upper, ticker_upper)
+        curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+
+        url = f"https://profit.pakistantoday.com.pk/?s={quote_plus(company_name)}"
+        resp = _fetch(url)
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        articles = []
+
+        for item in soup.find_all(["article", "div"], class_=lambda c: c and ("post" in str(c).lower() or "entry" in str(c).lower())):
+            title_tag = item.find(["h2", "h3", "h4"]) or item.find("a")
+            title = title_tag.get_text(strip=True) if title_tag else ""
+            if not title or len(title) < 10:
+                continue
+
+            date_tag = item.find("time") or item.find("span", class_=lambda c: c and "date" in str(c).lower())
+            date_text = date_tag.get_text(strip=True) if date_tag else ""
+            date_val = _parse_date_flexible(date_text) if date_text else None
+
+            if _in_date_window(date_val, curr_dt, lookback_days):
+                date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
+                articles.append(f"- [{date_display}] {title}")
+
+        if not articles:
+            return f"[Profit] No recent news found for {ticker_upper}."
+
+        header = f"## Profit (Pakistan Today) News for {ticker_upper} (last {lookback_days} days from {curr_date}):\n\n"
+        return header + "\n".join(articles[:15])
+    except Exception as e:
+        return f"[Profit] Could not fetch news for {ticker.upper().replace('.KA', '')}: {e}"
+
+
+def get_psx_news_thenews(ticker: str, curr_date: str, lookback_days: int = 30) -> str:
+    """Scrape The News International (business category) for company news."""
+    try:
+        ticker_upper = ticker.upper().replace(".KA", "")
+        company_name = PSX_COMPANY_NAMES.get(ticker_upper, ticker_upper)
+        curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+
+        url = f"https://www.thenews.com.pk/search?q={quote_plus(company_name)}&cat=3"
+        resp = _fetch(url)
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        articles = []
+
+        for item in soup.find_all(["article", "div", "li"], class_=lambda c: c and ("search" in str(c).lower() or "story" in str(c).lower() or "listing" in str(c).lower())):
+            title_tag = item.find(["h2", "h3", "h4"]) or item.find("a")
+            title = title_tag.get_text(strip=True) if title_tag else ""
+            if not title or len(title) < 10:
+                continue
+
+            date_tag = item.find("time") or item.find("span", class_=lambda c: c and "date" in str(c).lower())
+            date_text = date_tag.get_text(strip=True) if date_tag else ""
+            date_val = _parse_date_flexible(date_text) if date_text else None
+
+            if _in_date_window(date_val, curr_dt, lookback_days):
+                date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
+                articles.append(f"- [{date_display}] {title}")
+
+        if not articles:
+            return f"[The News] No recent news found for {ticker_upper}."
+
+        header = f"## The News Business for {ticker_upper} (last {lookback_days} days from {curr_date}):\n\n"
+        return header + "\n".join(articles[:15])
+    except Exception as e:
+        return f"[The News] Could not fetch news for {ticker.upper().replace('.KA', '')}: {e}"
+
+
+def get_sbp_press_releases(curr_date: str, lookback_days: int = 30) -> str:
+    """Scrape SBP press releases — monetary policy / rate decisions."""
+    try:
+        curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+        url = "https://www.sbp.org.pk/press/press.asp"
+        resp = _fetch(url)
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        releases = []
+
+        # SBP uses tables with date in one cell, link/title in another
+        for row in soup.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) < 2:
+                continue
+
+            # Try to find date and title from cells
+            date_val = None
+            title = ""
+            for cell in cells:
+                cell_text = cell.get_text(strip=True)
+                parsed = _parse_date_flexible(cell_text)
+                if parsed and not date_val:
+                    date_val = parsed
+                elif not title:
+                    a_tag = cell.find("a")
+                    if a_tag:
+                        a_text = a_tag.get_text(strip=True)
+                        if len(a_text) > 10:
+                            title = a_text
+                    elif len(cell_text) > 10:
+                        title = cell_text
+
+            if not title or not date_val:
+                continue
+
+            if _in_date_window(date_val, curr_dt, lookback_days):
+                date_display = date_val.strftime("%Y-%m-%d")
+                releases.append(f"- [{date_display}] {title}")
+
+        # Also check list items / divs as fallback
+        if not releases:
+            for item in soup.find_all(["li", "div"]):
+                links = item.find_all("a", href=True)
+                title = ""
+                for a in links:
+                    a_text = a.get_text(strip=True)
+                    if len(a_text) > 10:
+                        title = a_text
+                        break
+                if not title:
+                    continue
+                text = item.get_text(strip=True)
+                date_val = None
+                for part in re.split(r"[|\t]", text):
+                    parsed = _parse_date_flexible(part.strip())
+                    if parsed:
+                        date_val = parsed
+                        break
+                if date_val and _in_date_window(date_val, curr_dt, lookback_days):
+                    date_display = date_val.strftime("%Y-%m-%d")
+                    releases.append(f"- [{date_display}] {title}")
+
+        if not releases:
+            return f"[SBP] No recent press releases found (last {lookback_days} days)."
+
+        header = f"## SBP Press Releases (last {lookback_days} days from {curr_date}):\n\n"
+        return header + "\n".join(releases[:10])
+    except Exception as e:
+        return f"[SBP] Could not fetch press releases: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Main entry points
+# ---------------------------------------------------------------------------
+
+
+def get_news_psx(ticker: str, start_date: str, end_date: str) -> str:
+    """
+    Main company news entry point — combines PSX announcements + multiple
+    Pakistani news sources. Never raises; always returns a string.
+
+    Signature matches get_news_yfinance(ticker, start_date, end_date).
+    """
+    try:
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            lookback_days = max((end_dt - start_dt).days, 1)
+            curr_date = end_date
+        except ValueError:
+            curr_date = end_date if end_date else start_date
+            lookback_days = 7
+
+        scrapers = [
+            ("PSX Announcements", lambda: get_psx_announcements(ticker, curr_date, lookback_days)),
+            ("Business Recorder", lambda: get_psx_news_brecorder(ticker, curr_date, lookback_days)),
+            ("ProPakistani", lambda: get_psx_news_propakistani(ticker, curr_date, lookback_days)),
+            ("Profit", lambda: get_psx_news_profit(ticker, curr_date, lookback_days)),
+            ("The News", lambda: get_psx_news_thenews(ticker, curr_date, lookback_days)),
+        ]
+
+        parts = []
+        for name, scrape_fn in scrapers:
+            try:
+                parts.append(scrape_fn())
+            except Exception as e:
+                parts.append(f"[{name}] Error: {e}")
+
+        combined = "\n\n".join(parts)
+        if not combined.strip():
+            return f"No news found for {ticker} between {start_date} and {end_date}."
+        return combined
+    except Exception as e:
+        return f"[PSX News] Unexpected error fetching news for {ticker}: {e}"
+
+
+def get_global_news_psx(curr_date: str, look_back_days: int = 7, limit: int = 10) -> str:
+    """
+    Pakistan macro/market news (KSE-100 index, SBP policy, economy).
+    Never raises; always returns a string.
+
+    Signature matches get_global_news_yfinance(curr_date, look_back_days, limit).
+    """
+    try:
+        curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+        all_articles = []
+
+        # Source 1: Business Recorder economy
+        try:
+            resp = _fetch("https://www.brecorder.com/economy")
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            for item in soup.find_all(["article", "div"], class_=lambda c: c and ("story" in str(c).lower() or "article" in str(c).lower())):
+                title_tag = item.find(["h2", "h3", "h4", "a"])
+                title = title_tag.get_text(strip=True) if title_tag else ""
+                if not title or len(title) < 10:
+                    continue
+
+                link = ""
+                a_tag = item.find("a", href=True)
+                if a_tag:
+                    href = a_tag["href"]
+                    link = href if href.startswith("http") else f"https://www.brecorder.com{href}"
+
+                date_tag = item.find("span", class_=lambda c: c and "date" in str(c).lower())
+                if not date_tag:
+                    date_tag = item.find("time")
                 date_text = date_tag.get_text(strip=True) if date_tag else ""
                 date_val = _parse_date_flexible(date_text) if date_text else None
 
@@ -375,7 +534,7 @@ def get_global_news_psx(curr_date: str, look_back_days: int = 7, limit: int = 10
                 if _in_date_window(date_val, curr_dt, look_back_days):
                     date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
                     all_articles.append(
-                        f"### {title} ({date_display}, Dawn Business)\n"
+                        f"### {title} ({date_display}, Business Recorder)\n"
                         + (f"{snippet}\n" if snippet else "")
                         + (f"Link: {link}\n" if link else "")
                     )
@@ -383,11 +542,65 @@ def get_global_news_psx(curr_date: str, look_back_days: int = 7, limit: int = 10
                 if len(all_articles) >= limit:
                     break
         except Exception:
-            pass  # graceful fallback
+            pass
 
-    if not all_articles:
-        return f"[Pakistan Macro News] No macro news found for {curr_date} (looked back {look_back_days} days)."
+        # Source 2: Dawn Business
+        if len(all_articles) < limit:
+            try:
+                resp = _fetch("https://www.dawn.com/business")
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "html.parser")
 
-    start_date = (curr_dt - timedelta(days=look_back_days)).strftime("%Y-%m-%d")
-    header = f"## Pakistan Macro / Market News, from {start_date} to {curr_date}:\n\n"
-    return header + "\n".join(all_articles[:limit])
+                for item in soup.find_all("article"):
+                    title_tag = item.find(["h2", "h3", "a"])
+                    title = title_tag.get_text(strip=True) if title_tag else ""
+                    if not title or len(title) < 10:
+                        continue
+
+                    link = ""
+                    a_tag = item.find("a", href=True)
+                    if a_tag:
+                        href = a_tag["href"]
+                        link = href if href.startswith("http") else f"https://www.dawn.com{href}"
+
+                    date_tag = item.find("span", class_=lambda c: c and "time" in str(c).lower())
+                    if not date_tag:
+                        date_tag = item.find("time")
+                        if not date_tag:
+                            date_tag = item.find("span", class_="timestamp")
+                    date_text = date_tag.get_text(strip=True) if date_tag else ""
+                    date_val = _parse_date_flexible(date_text) if date_text else None
+
+                    snippet_tag = item.find("p")
+                    snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
+
+                    if _in_date_window(date_val, curr_dt, look_back_days):
+                        date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
+                        all_articles.append(
+                            f"### {title} ({date_display}, Dawn Business)\n"
+                            + (f"{snippet}\n" if snippet else "")
+                            + (f"Link: {link}\n" if link else "")
+                        )
+
+                    if len(all_articles) >= limit:
+                        break
+            except Exception:
+                pass
+
+        # Source 3: SBP press releases
+        if len(all_articles) < limit:
+            try:
+                sbp = get_sbp_press_releases(curr_date, look_back_days)
+                if sbp and "[SBP] No recent" not in sbp and "[SBP] Could not" not in sbp:
+                    all_articles.append(sbp)
+            except Exception:
+                pass
+
+        if not all_articles:
+            return f"[Pakistan Macro News] No macro news found for {curr_date} (looked back {look_back_days} days)."
+
+        start_date = (curr_dt - timedelta(days=look_back_days)).strftime("%Y-%m-%d")
+        header = f"## Pakistan Macro / Market News, from {start_date} to {curr_date}:\n\n"
+        return header + "\n".join(all_articles[:limit])
+    except Exception as e:
+        return f"[Pakistan Macro News] Unexpected error: {e}"
