@@ -78,6 +78,7 @@ def _parse_date_flexible(date_str: str) -> datetime | None:
         "%B %d, %Y",     # February 25, 2026
         "%d %B %Y",      # 25 February 2026
         "%d %b, %Y",     # 25 Feb, 2026
+        "%d-%b-%Y",      # 26-Mar-2026 (SCSTrade format)
     ]
     date_str = date_str.strip()
     for fmt in formats:
@@ -449,6 +450,128 @@ def get_sbp_press_releases(curr_date: str, lookback_days: int = 30) -> str:
 
 
 # ---------------------------------------------------------------------------
+# SCSTrade — company snapshots + announcements
+# ---------------------------------------------------------------------------
+
+def get_scstrade_news(ticker: str, curr_date: str, lookback_days: int = 30) -> str:
+    """
+    Scrape SCSTrade company snapshot page for announcements + insider transactions.
+    Table 0: [Category, Date, Title, View] — corporate announcements
+    Table 1: [Date, Name, Role, Direction] — insider buy/sell activity
+    URL: https://scstrade.com/stockscreening/SS_CompanySnapShot.aspx?symbol={TICKER}
+    """
+    try:
+        bare = ticker.upper().replace(".KA", "")
+        curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+        url = f"https://scstrade.com/stockscreening/SS_CompanySnapShot.aspx?symbol={bare}"
+        resp = _fetch(url)
+        resp.raise_for_status()
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        tables = soup.find_all("table")
+        announcements = []
+        insiders = []
+
+        # Table 0: announcements — cols: Category, Date, Title, Action
+        if len(tables) > 0:
+            for row in tables[0].find_all("tr"):
+                cells = row.find_all("td")
+                if len(cells) < 3:
+                    continue
+                category = cells[0].get_text(strip=True)
+                date_text = cells[1].get_text(strip=True)
+                title = cells[2].get_text(strip=True)[:200]
+                date_val = _parse_date_flexible(date_text)
+                if title and _in_date_window(date_val, curr_dt, lookback_days):
+                    date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
+                    announcements.append(f"- [{date_display}] [{category}] {title}")
+
+        # Table 1: insider transactions — cols: Date, Name, Role, Direction
+        if len(tables) > 1:
+            for row in tables[1].find_all("tr"):
+                cells = row.find_all("td")
+                if len(cells) < 4:
+                    continue
+                date_text = cells[0].get_text(strip=True)
+                name = cells[1].get_text(strip=True)
+                role = cells[2].get_text(strip=True)
+                direction = cells[3].get_text(strip=True)  # Buy / Sell
+                date_val = _parse_date_flexible(date_text)
+                if name and direction and _in_date_window(date_val, curr_dt, lookback_days):
+                    date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
+                    insiders.append(f"- [{date_display}] {name} ({role}): {direction}")
+
+        parts = []
+        if announcements:
+            parts.append(f"## SCSTrade Announcements for {bare}:\n" + "\n".join(announcements[:12]))
+        if insiders:
+            parts.append(f"## SCSTrade Insider Transactions for {bare}:\n" + "\n".join(insiders[:10]))
+
+        if not parts:
+            return f"[SCSTrade] No recent data found for {bare}."
+        return "\n\n".join(parts)
+    except Exception as e:
+        return f"[SCSTrade] Could not fetch data for {ticker.upper().replace('.KA', '')}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Nukta Business — YouTube RSS (title-level signal, English titles)
+# ---------------------------------------------------------------------------
+
+NUKTA_BUSINESS_CHANNEL_ID = "UCHPjDxfGDT5tnVrsPWmsvjg"  # Nukta Pakistan (main)
+
+def get_nukta_youtube_signals(ticker: str, curr_date: str, lookback_days: int = 30) -> str:
+    """
+    Scan Nukta Pakistan YouTube RSS feed for video titles mentioning the company.
+    Returns title-level signal (videos in Urdu but titles carry sentiment).
+    """
+    try:
+        bare = ticker.upper().replace(".KA", "")
+        company_name = PSX_COMPANY_NAMES.get(bare, bare).lower()
+        curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+
+        rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={NUKTA_BUSINESS_CHANNEL_ID}"
+        resp = _fetch(rss_url)
+        resp.raise_for_status()
+
+        # Parse XML entries
+        entries = re.findall(
+            r"<entry>(.*?)</entry>", resp.text, re.DOTALL
+        )
+        matches = []
+        for entry in entries:
+            title_m = re.search(r"<title>(.*?)</title>", entry)
+            date_m = re.search(r"<published>(.*?)</published>", entry)
+            link_m = re.search(r'href="(https://www\.youtube\.com/watch\?v=[^"]+)"', entry)
+
+            if not title_m:
+                continue
+            title = title_m.group(1).strip()
+            date_str = date_m.group(1).strip() if date_m else ""
+            link = link_m.group(1) if link_m else ""
+
+            # Check if title mentions the company or ticker
+            title_lower = title.lower()
+            if bare.lower() not in title_lower and company_name not in title_lower:
+                continue
+
+            date_val = _parse_date_flexible(date_str[:10]) if date_str else None
+            if not _in_date_window(date_val, curr_dt, lookback_days):
+                continue
+
+            date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
+            matches.append(f"- [{date_display}] 📺 {title}" + (f"\n  {link}" if link else ""))
+
+        if not matches:
+            return f"[Nukta] No recent videos mentioning {bare} found."
+
+        header = f"## Nukta Pakistan — Video Titles mentioning {bare}:\n\n"
+        return header + "\n".join(matches[:10])
+    except Exception as e:
+        return f"[Nukta] Could not fetch YouTube feed: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Main entry points
 # ---------------------------------------------------------------------------
 
@@ -476,6 +599,8 @@ def get_news_psx(ticker: str, start_date: str, end_date: str) -> str:
             ("ProPakistani", lambda: get_psx_news_propakistani(ticker, curr_date, lookback_days)),
             ("Profit", lambda: get_psx_news_profit(ticker, curr_date, lookback_days)),
             ("The News", lambda: get_psx_news_thenews(ticker, curr_date, lookback_days)),
+            ("SCSTrade", lambda: get_scstrade_news(ticker, curr_date, lookback_days)),
+            ("Nukta", lambda: get_nukta_youtube_signals(ticker, curr_date, lookback_days)),
         ]
 
         parts = []

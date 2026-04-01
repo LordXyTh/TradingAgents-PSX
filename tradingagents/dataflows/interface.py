@@ -164,6 +164,7 @@ def route_to_vendor(method: str, *args, **kwargs):
         if vendor not in fallback_vendors:
             fallback_vendors.append(vendor)
 
+    last_error = None
     for vendor in fallback_vendors:
         if vendor not in VENDOR_METHODS[method]:
             continue
@@ -175,5 +176,14 @@ def route_to_vendor(method: str, *args, **kwargs):
             return impl_func(*args, **kwargs)
         except AlphaVantageRateLimitError:
             continue  # Only rate limits trigger fallback
+        except Exception as e:
+            # For PSX vendor, don't fallback to other vendors on general errors
+            # Return the error message instead of cascading to vendors that may need API keys
+            if vendor == "psx":
+                return f"[PSX data temporarily unavailable: {str(e)}]"
+            last_error = e
+            continue
 
+    if last_error:
+        raise last_error
     raise RuntimeError(f"No available vendor for '{method}'")
