@@ -86,9 +86,10 @@ PSX_TICKER_LIST = [
 
 def normalize_psx_ticker(symbol: str) -> str:
     """Append .KA suffix if not already present."""
-    if not symbol.upper().endswith(".KA"):
-        return f"{symbol.upper()}.KA"
-    return symbol.upper()
+    clean = symbol.upper().replace(".__US__", "")
+    if not clean.endswith(".KA"):
+        return f"{clean}.KA"
+    return clean
 
 
 def is_psx_ticker(symbol: str) -> bool:
@@ -116,6 +117,10 @@ def is_psx_ticker(symbol: str) -> bool:
         if upper.endswith(suffix):
             return False
     
+    # User explicitly chose US market (CLI appends .__US__ sentinel)
+    if upper.endswith(".__US__"):
+        return False
+
     # No suffix → check if in known PSX list
     # This is a convenience: typing "UBL" routes to PSX, "AAPL" routes to US
     return upper in PSX_TICKER_LIST

@@ -612,8 +612,35 @@ def get_user_selections():
 
 
 def get_ticker():
-    """Get ticker symbol from user input."""
-    return typer.prompt("", default="SPY")
+    """Get ticker symbol from user input, with market selection for ambiguous tickers."""
+    from tradingagents.dataflows.psx_stock import PSX_TICKER_LIST
+
+    # Known collisions: tickers that exist on both PSX and US exchanges
+    COLLISION_TICKERS = {
+        "HUBC", "PPL", "NBP", "MCB", "HMB", "PTC", "SYS", "LUCK",
+        "DCR", "FFC", "SSGC", "PSO", "SHEL", "APL", "ANL", "FML",
+        "NML", "NCL", "PSX", "ISL", "AGP", "ABOT", "PSMC", "INDU",
+    }
+
+    ticker = typer.prompt("", default="SPY").strip().upper()
+
+    # If explicit suffix → no ambiguity
+    if "." in ticker:
+        return ticker
+
+    # If it's a known collision → ask which market
+    if ticker in COLLISION_TICKERS:
+        console.print(f"\n[yellow]⚠️  '{ticker}' exists on both PSX and US exchanges.[/yellow]")
+        console.print("  [cyan][1][/cyan] PSX (Pakistan Stock Exchange)")
+        console.print("  [cyan][2][/cyan] US / International (yfinance)")
+        choice = typer.prompt("  Select market", default="1")
+        if choice.strip() == "2":
+            # Append a fake suffix to prevent PSX routing
+            return f"{ticker}.__US__"
+        else:
+            return ticker
+
+    return ticker
 
 
 def get_analysis_date():
