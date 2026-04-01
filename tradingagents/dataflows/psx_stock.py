@@ -3,9 +3,7 @@
 from typing import Annotated
 from datetime import datetime
 
-import requests
-from bs4 import BeautifulSoup
-
+from .scstrade import get_scstrade_insider_transactions
 from .y_finance import (
     get_YFin_data_online,
     get_stock_stats_indicators_window,
@@ -103,43 +101,8 @@ def get_psx_insider_transactions(
     ticker: Annotated[str, "ticker symbol of the PSX company"],
 ) -> str:
     """
-    PSX insider/director disclosures scraped from dps.psx.com.pk.
-    Falls back gracefully if scraping fails.
+    PSX insider/director transactions from SCSTrade snapshot page.
+    Delegates to scstrade.get_scstrade_insider_transactions.
     """
-    bare = ticker.upper().replace(".KA", "")
-    url = f"https://dps.psx.com.pk/company/{bare}"
-
-    try:
-        resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        # Look for announcement/disclosure rows mentioning director or insider keywords
-        disclosures = []
-        keywords = ["director", "disclosure", "insider", "share", "acquisition", "disposal"]
-
-        for row in soup.select("table tr, .announcement, .ann-item, li"):
-            text = row.get_text(separator=" ", strip=True)
-            if any(kw in text.lower() for kw in keywords):
-                disclosures.append(text)
-
-        if not disclosures:
-            return (
-                f"# Insider Transactions for {bare} (PSX)\n"
-                f"No director/insider disclosures found on dps.psx.com.pk.\n"
-                f"This data may not be available for all PSX tickers."
-            )
-
-        header = (
-            f"# Insider / Director Disclosures for {bare} (PSX)\n"
-            f"# Source: dps.psx.com.pk/company/{bare}\n"
-            f"# Scraped on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        )
-        return header + "\n".join(disclosures[:50])
-
-    except Exception as e:
-        return (
-            f"# Insider Transactions for {bare} (PSX)\n"
-            f"Unable to retrieve insider disclosures: {e}\n"
-            f"dps.psx.com.pk may be temporarily unavailable."
-        )
+    curr_date = datetime.now().strftime("%Y-%m-%d")
+    return get_scstrade_insider_transactions(ticker, curr_date, lookback_days=90)

@@ -127,53 +127,36 @@ class TestGetPsxIncomeStatement(unittest.TestCase):
 
 
 class TestGetPsxInsiderTransactions(unittest.TestCase):
-    @patch("tradingagents.dataflows.psx_stock.requests.get")
-    def test_scraping_success(self, mock_get):
-        html = """
-        <html><body>
-        <table><tr><td>Director disclosure: CEO acquired 10,000 shares</td></tr></table>
-        </body></html>
-        """
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
+    """Tests for get_psx_insider_transactions which now delegates to scstrade module."""
 
+    @patch("tradingagents.dataflows.psx_stock.get_scstrade_insider_transactions")
+    def test_delegates_to_scstrade(self, mock_scstrade):
+        mock_scstrade.return_value = "## SCSTrade Insider Transactions for UBL:\n- [2026-03-20] Ahmed (Director): Buy"
         result = get_psx_insider_transactions("UBL")
-        assert "Director" in result or "director" in result
+        assert "Director" in result or "Buy" in result
         assert "UBL" in result
+        mock_scstrade.assert_called_once()
 
-    @patch("tradingagents.dataflows.psx_stock.requests.get")
-    def test_scraping_failure_graceful(self, mock_get):
-        mock_get.side_effect = Exception("Connection refused")
+    @patch("tradingagents.dataflows.psx_stock.get_scstrade_insider_transactions")
+    def test_graceful_on_failure(self, mock_scstrade):
+        mock_scstrade.return_value = "[SCSTrade Insiders] Could not fetch insider data for UBL: Connection refused"
         result = get_psx_insider_transactions("UBL")
         assert isinstance(result, str)
-        assert "Unable to retrieve" in result
+        assert "Could not fetch" in result
 
-    @patch("tradingagents.dataflows.psx_stock.requests.get")
-    def test_no_disclosures_found(self, mock_get):
-        html = "<html><body><p>No relevant data</p></body></html>"
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
-
+    @patch("tradingagents.dataflows.psx_stock.get_scstrade_insider_transactions")
+    def test_no_transactions_found(self, mock_scstrade):
+        mock_scstrade.return_value = "[SCSTrade Insiders] No insider transactions found for OGDC in last 90 days."
         result = get_psx_insider_transactions("OGDC")
-        assert "No director/insider disclosures" in result
+        assert "No insider transactions" in result
 
-    @patch("tradingagents.dataflows.psx_stock.requests.get")
-    def test_strips_ka_suffix_for_url(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<html><body></body></html>"
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
-
+    @patch("tradingagents.dataflows.psx_stock.get_scstrade_insider_transactions")
+    def test_strips_ka_suffix(self, mock_scstrade):
+        mock_scstrade.return_value = "some result"
         get_psx_insider_transactions("UBL.KA")
-        called_url = mock_get.call_args[0][0]
-        assert called_url == "https://dps.psx.com.pk/company/UBL"
+        call_args = mock_scstrade.call_args
+        assert call_args[0][0] == "UBL.KA"  # passed through; scstrade strips it
+        assert call_args[1]["lookback_days"] == 90
 
 
 class TestInterfaceWiring(unittest.TestCase):

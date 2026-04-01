@@ -1,11 +1,18 @@
 """PSX news scraping — Business Recorder, Dawn Business, PSX announcements,
-ProPakistani, Profit by Pakistan Today, The News, and SBP press releases."""
+ProPakistani, Profit by Pakistan Today, The News, SBP press releases,
+and SCSTrade APIs (announcements, news, research)."""
 
 import re
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from urllib.parse import quote_plus
+
+from .scstrade import (
+    get_scstrade_announcements,
+    get_scstrade_news as _scstrade_news,
+    get_scstrade_research,
+)
 
 # Top 30+ KSE-100 companies mapped to search-friendly names
 PSX_COMPANY_NAMES = {
@@ -450,68 +457,9 @@ def get_sbp_press_releases(curr_date: str, lookback_days: int = 30) -> str:
 
 
 # ---------------------------------------------------------------------------
-# SCSTrade — company snapshots + announcements
+# SCSTrade — now delegated to scstrade.py module (JSON APIs)
+# Old HTML scraper replaced by structured API calls.
 # ---------------------------------------------------------------------------
-
-def get_scstrade_news(ticker: str, curr_date: str, lookback_days: int = 30) -> str:
-    """
-    Scrape SCSTrade company snapshot page for announcements + insider transactions.
-    Table 0: [Category, Date, Title, View] — corporate announcements
-    Table 1: [Date, Name, Role, Direction] — insider buy/sell activity
-    URL: https://scstrade.com/stockscreening/SS_CompanySnapShot.aspx?symbol={TICKER}
-    """
-    try:
-        bare = ticker.upper().replace(".KA", "")
-        curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
-        url = f"https://scstrade.com/stockscreening/SS_CompanySnapShot.aspx?symbol={bare}"
-        resp = _fetch(url)
-        resp.raise_for_status()
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        tables = soup.find_all("table")
-        announcements = []
-        insiders = []
-
-        # Table 0: announcements — cols: Category, Date, Title, Action
-        if len(tables) > 0:
-            for row in tables[0].find_all("tr"):
-                cells = row.find_all("td")
-                if len(cells) < 3:
-                    continue
-                category = cells[0].get_text(strip=True)
-                date_text = cells[1].get_text(strip=True)
-                title = cells[2].get_text(strip=True)[:200]
-                date_val = _parse_date_flexible(date_text)
-                if title and _in_date_window(date_val, curr_dt, lookback_days):
-                    date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
-                    announcements.append(f"- [{date_display}] [{category}] {title}")
-
-        # Table 1: insider transactions — cols: Date, Name, Role, Direction
-        if len(tables) > 1:
-            for row in tables[1].find_all("tr"):
-                cells = row.find_all("td")
-                if len(cells) < 4:
-                    continue
-                date_text = cells[0].get_text(strip=True)
-                name = cells[1].get_text(strip=True)
-                role = cells[2].get_text(strip=True)
-                direction = cells[3].get_text(strip=True)  # Buy / Sell
-                date_val = _parse_date_flexible(date_text)
-                if name and direction and _in_date_window(date_val, curr_dt, lookback_days):
-                    date_display = date_val.strftime("%Y-%m-%d") if date_val else "N/A"
-                    insiders.append(f"- [{date_display}] {name} ({role}): {direction}")
-
-        parts = []
-        if announcements:
-            parts.append(f"## SCSTrade Announcements for {bare}:\n" + "\n".join(announcements[:12]))
-        if insiders:
-            parts.append(f"## SCSTrade Insider Transactions for {bare}:\n" + "\n".join(insiders[:10]))
-
-        if not parts:
-            return f"[SCSTrade] No recent data found for {bare}."
-        return "\n\n".join(parts)
-    except Exception as e:
-        return f"[SCSTrade] Could not fetch data for {ticker.upper().replace('.KA', '')}: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -599,7 +547,9 @@ def get_news_psx(ticker: str, start_date: str, end_date: str) -> str:
             ("ProPakistani", lambda: get_psx_news_propakistani(ticker, curr_date, lookback_days)),
             ("Profit", lambda: get_psx_news_profit(ticker, curr_date, lookback_days)),
             ("The News", lambda: get_psx_news_thenews(ticker, curr_date, lookback_days)),
-            ("SCSTrade", lambda: get_scstrade_news(ticker, curr_date, lookback_days)),
+            ("SCSTrade Announcements", lambda: get_scstrade_announcements(ticker, curr_date, lookback_days)),
+            ("SCSTrade News", lambda: _scstrade_news(ticker, curr_date, lookback_days)),
+            ("SCSTrade Research", lambda: get_scstrade_research(ticker)),
             ("Nukta", lambda: get_nukta_youtube_signals(ticker, curr_date, lookback_days)),
         ]
 
