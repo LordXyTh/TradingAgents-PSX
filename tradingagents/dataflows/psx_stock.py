@@ -36,9 +36,33 @@ def normalize_psx_ticker(symbol: str) -> str:
 
 
 def is_psx_ticker(symbol: str) -> bool:
-    """Detect if a ticker is PSX-listed."""
+    """
+    Detect if a ticker should use PSX data stack.
+    
+    Routing rules (in order of precedence):
+    1. Explicit .KA suffix → PSX (e.g., UBL.KA)
+    2. Explicit US suffix (.N, .O, .A, .K) → NOT PSX (force US)
+    3. No suffix + in PSX_TICKER_LIST → PSX (convenience for known tickers)
+    4. No suffix + NOT in list → NOT PSX (default to yfinance/US)
+    
+    To force US market for a ticker that's also in PSX list, use explicit suffix.
+    """
     upper = symbol.upper()
-    return upper.endswith(".KA") or upper in PSX_TICKER_LIST
+    
+    # Explicit PSX suffix → definitely PSX
+    if upper.endswith(".KA"):
+        return True
+    
+    # Explicit US/other market suffixes → NOT PSX
+    # .N = NYSE, .O = NASDAQ, .A = NYSE AMEX, .K = NYSE Arca, .TO = Toronto, .L = London
+    us_suffixes = ('.N', '.O', '.A', '.K', '.TO', '.L', '.T', '.HK', '.SS', '.SZ')
+    for suffix in us_suffixes:
+        if upper.endswith(suffix):
+            return False
+    
+    # No suffix → check if in known PSX list
+    # This is a convenience: typing "UBL" routes to PSX, "AAPL" routes to US
+    return upper in PSX_TICKER_LIST
 
 
 def get_psx_stock_data(
